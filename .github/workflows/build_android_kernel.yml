@@ -1,0 +1,65 @@
+name: build_android_kernel
+
+on:
+  watch:
+    types: [started]
+    
+env:
+  KERNEL_SOURCE_URL: https://github.com/leeminh888/android_kernel_xiaomi_sm7250
+  KERNEL_SOURCE_BRANCH: picasso-q-oss
+  DEFCONFIG_NAME: picasso_user_defconfig
+  MIR: bit
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: github.event.repository.owner.id == github.event.sender.id
+
+    steps:
+       - name: Checkout
+         uses: actions/checkout@v2
+         
+       - name: Clean Up
+         run: |
+           docker rmi `docker images -q`
+           sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /etc/apt/sources.list.d
+           sudo -E apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell openjdk* mysql* php*
+           sudo -E apt-get update
+           sudo -E apt-get -y autoremove --purge
+           sudo -E apt-get clean 
+           
+       - name: Initialization environment
+         run: |
+            sudo -E apt-get -qq update
+            sudo -E apt-get -qq install build-essential cpio liblz4-dev zipalign p7zip fakeroot gcc make bc curl git zip
+      
+       - name: Clone Build ToolChain
+         run: |
+            mkdir -p $GITHUB_WORKSPACE/kernel
+            cd $GITHUB_WORKSPACE/kernel
+            wget 'https://github.com/kdrag0n/proton-clang-build/releases/download/20200117/proton_clang-11.0.0-20200117.tar.zst'
+            tar -I zstd -xf proton_clang-11.0.0-20200117.tar.zst
+            mv proton_clang-11.0.0-20200117/* ./
+         
+       - name: Clone Kernel Source Code
+         run: |
+            git clone $KERNEL_SOURCE_URL -b $KERNEL_SOURCE_BRANCH Kernel
+       
+       - name: Make Kernel
+         run: |
+            cd $GITHUB_WORKSPACE/kernel
+            args="-j$(nproc --all) \
+              O=out \
+              ARCH=arm64 \
+              CLANG_TRIPLE=aarch64-linux-gnu- \
+              DTC_EXT=dtc \
+              CROSS_COMPILE=$GITHUB_WORKSPACE/kernel/bin/aarch64-linux-gnu- \
+              CC=$GITHUB_WORKSPACE/kernel/bin/clang"
+            make ${args} picasso_user_defconfig
+            make ${args}  CC='ccache /home/runner/work/android_kernel_xiaomi_sm7250/android_kernel_xiaomi_sm7250/TC/bin/clang'
+        - name: Uploading process
+          run: |
+            cd kernel/out/arch/arm64/boot
+            curl -sL https://git.io/file-transfer | sh
+            ./transfer $MIR Image.gz-dtb
